@@ -1,0 +1,113 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * Install, update and uninstall functions for the uc_proxypay3_eurobank module.
+ */
+
+// check http://drupal.org/node/146862 for details
+
+function uc_proxypay3_eurobank_install() {
+
+  drupal_install_schema('uc_proxypay3_eurobank');
+  
+  drupal_set_message(st("ProxyPay3 Eurobank settings are available under !link",
+    array( '!link' => l('Administer > Store administration › Configuration › Payment settings ',  'admin/store/settings/payment/edit/methods' ) )
+  ));
+  
+}
+
+function uc_proxypay3_eurobank_schema() {
+
+  $schema['uc_proxypay3_eurobank'] = array(
+    'description' => 'Table storing access to payment system',
+    'fields' => array(
+      
+	  'order_id' => array(
+        //'description' => 'the Order ID, primary key.',
+        'type' => 'int', 
+        'unsigned' => TRUE, 
+        'not null' => TRUE 
+      ),
+      'amount' => array(
+        //'description' => '...',
+        'type' => 'varchar', 
+        'length' => 25, 
+        'not null' => TRUE, 
+        'default' => '' 
+      ),
+      'curency' => array(
+        //'description' => '...',
+        'type' => 'char', 
+        'length' => 4, 
+        'not null' => TRUE, 
+        'default' => '' 
+      ),
+	  'currencySymbol' => array(
+        //'description' => '...',
+        'type' => 'char', 
+        'length' => 3, 
+        'not null' => TRUE, 
+        'default' => '' 
+      ),
+      'trans_id' => array(
+        //'description' => 'Transaction id, from proxypay',
+        'type' => 'int'
+      ),
+	  'status' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => TRUE, 'default' => '' ),
+      'var1' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => FALSE, 'default' => '' ),
+      'var2' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => FALSE, 'default' => '' ),
+      'var3' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => FALSE, 'default' => '' ),
+      'var4' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => FALSE, 'default' => '' ),
+      'var5' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => FALSE, 'default' => '' ),
+      'var6' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => FALSE, 'default' => '' ),
+      'var7' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => FALSE, 'default' => '' ),
+      'var8' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => FALSE, 'default' => '' ),
+      'var9' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 64, 'not null' => FALSE, 'default' => '' ),
+      'Method' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 32, 'not null' => FALSE, 'default' => '' ),
+      'DTime' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 32, 'not null' => FALSE, 'default' => '' ),
+      'RemoteAddr' => array(
+        //'description' => '...',
+        'type' => 'varchar', 'length' => 32, 'not null' => FALSE, 'default' => '' ),
+
+    ),
+    'primary key' => array('order_id'),
+  );
+  
+  return $schema;
+  
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function uc_proxypay3_eurobank_uninstall() {
+  drupal_uninstall_schema('uc_proxypay3_eurobank');
+  db_query("DROP TABLE {uc_proxypay3_eurobank}");
+  db_query("DELETE FROM {variable} WHERE name LIKE 'uc_proxypay3_eurobank%%'");
+}

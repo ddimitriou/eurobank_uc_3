@@ -1,0 +1,446 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * Integrates proxypay for eurobank bank (Greece) redirected payment service.
+ */
+
+/* TODO FormAPI image buttons are now supported.
+   FormAPI now offers the 'image_button' element type, allowing developers to
+   use icons or other custom images in place of traditional HTML submit buttons.
+
+$form['my_image_button'] = array(
+  '#type'         => 'image_button',
+  '#title'        => t('My button'),
+  '#return_value' => 'my_data',
+  '#src'          => 'my/image/path.jpg',
+); */
+
+/* TODO Change 'Submit' to 'Save' on buttons
+   It has been agreed on that the description 'Submit' for a button is not a
+   good choice since it does not indicate what actually happens. While for
+   example on node editing forms, 'Preview' and 'Delete' describe exactly what
+   will happen when the user clicks on the button, 'Submit' only gives a vague
+   idea. When labelling your buttons, make sure that it is clear what this
+   button does when the user clicks on it. */
+
+/* TODO New user_mail_tokens() method may be useful.
+   user.module now provides a user_mail_tokens() function to return an array
+   of the tokens available for the email notification messages it sends when
+   accounts are created, activated, blocked, etc. Contributed modules that
+   wish to make use of the same tokens for their own needs are encouraged
+   to use this function. */
+
+/* TODO
+   There is a new hook_watchdog in core. This means that contributed modules
+   can implement hook_watchdog to log Drupal events to custom destinations.
+   Two core modules are included, dblog.module (formerly known as watchdog.module),
+   and syslog.module. Other modules in contrib include an emaillog.module,
+   included in the logging_alerts module. See syslog or emaillog for an
+   example on how to implement hook_watchdog.
+function example_watchdog($log = array()) {
+  if ($log['severity'] == WATCHDOG_ALERT) {
+    mysms_send($log['user']->uid,
+      $log['type'],
+      $log['message'],
+      $log['variables'],
+      $log['severity'],
+      $log['referer'],
+      $log['ip'],
+      format_date($log['timestamp']));
+  }
+} */
+
+/* TODO Implement the hook_theme registry. Combine all theme registry entries
+   into one hook_theme function in each corresponding module file.
+function uc_proxypay3_eurobank_theme() {
+  return array(
+  );
+} */
+
+/* TODO You may want to take advantage of new form-specific alter hooks.
+   The hook_form_alter() is complemented by hook_form_$form-id_alter().
+   Optionally, modules can implement form-specific alteration functions rather
+   than a single hook_form_alter() with many conditional switch statements.
+   This is optional, and is most useful for tidying the code of modules that
+   alter many forms to customize a site's operations.
+   The new function names are built using the following format:
+   [your-module-name]_form_[$form_id]_alter. */
+
+
+
+/**
+ * Hook Functions (Drupal)
+ */
+
+/**
+ * Implementation of hook_menu().
+ */
+function uc_proxypay3_eurobank_menu() {
+  
+  $items = array();
+  
+  $items[variable_get('uc_proxypay3_eurobank_links_complete', 'cart/eurobank/complete')] = array(
+    'title' => 'Order complete',
+    'page callback' => 'uc_proxypay3_eurobank_complete',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_proxypay3_eurobank.proccess.inc',
+  );
+  $items[variable_get('uc_proxypay3_eurobank_links_error', 'cart/eurobank/error')] = array(
+    'title' => 'Error proccessing Credit Card',
+    'page callback' => 'uc_proxypay3_eurobank_error',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_proxypay3_eurobank.proccess.inc',
+  );
+  $items[variable_get('uc_proxypay3_eurobank_links_confirm', 'cart/eurobank/confirm')] = array(
+    'title' => 'Order complete',
+    'page callback' => 'uc_proxypay3_eurobank_confirm',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_proxypay3_eurobank.proccess.inc',
+  );
+  $items[variable_get('uc_proxypay3_eurobank_links_validate', 'cart/eurobank/validate')] = array(
+    'title' => 'Order complete',
+    'page callback' => 'uc_proxypay3_eurobank_validate',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    'file' => 'uc_proxypay3_eurobank.proccess.inc',
+  );
+
+  return $items;
+}
+
+/**
+ * Implementation of hook_ucga_display().
+ */
+function uc_proxypay3_eurobank_ucga_display() {
+  // Tell UC Google Analytics to display the e-commerce JS on the custom
+  // order completion page for this module.
+
+  if ( arg(0) == 'cart' && arg(1) == 'eurobank' && arg(2) == 'complete') {
+    return TRUE;
+  }
+}
+
+
+ 
+function uc_proxypay3_eurobank_uc_payment_gateway() {
+  $gateways['proxypay3_eurobank'] = array(
+    'title' => t('Eurobank Redirection Gateway'),
+    'description' => t('Process payments through Eurobank gateway'),
+  );
+  return $gateways;
+}
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function uc_proxypay3_eurobank_form_alter(&$form, &$form_state, $form_id) {
+  if ($form_id == 'uc_cart_checkout_review_form' && ($order_id = intval($_SESSION['cart_order'])) > 0) {
+    $order = uc_order_load($order_id);
+
+    if ($order->payment_method == 'proxypay3_eurobank') {
+      unset($form['submit']);
+      $form['#prefix'] = '<table style="display: inline; padding-top: 1em;"><tr><td>';
+      $form['#suffix'] = '</td><td>'. drupal_get_form('uc_proxypay3_eurobank_form', $order) .'</td></tr></table>';
+    }
+  }
+}
+
+
+/**
+ *****************************
+ * Hook Functions (Ubercart) *
+ *****************************
+ */
+
+/**
+ * Implements hook_uc_payment_method().
+ */
+function uc_proxypay3_eurobank_uc_payment_method() {
+  
+  $path = base_path() . drupal_get_path('module', 'uc_proxypay3_eurobank');
+  $title = variable_get('uc_proxypay3_eurobank_method_title', t('Credit card on Eurobank secure server'));
+  $title .= '<br /><img src="'. $path .'/cards.gif" style="position: relative; left: 2.5em;">';
+
+  $methods[] = array(
+    'id' => 'proxypay3_eurobank',
+    'name' => t('Eurobank'),
+    'title' => $title,
+    'review' => t('Credit card'),
+    'desc' => t('Redirect to Eurobank to pay by credit card.'),
+    'callback' => 'uc_payment_method_proxypay3_eurobank',
+    'redirect' => 'uc_proxypay3_eurobank_form',
+    'weight' => 3,
+    'checkout' => TRUE,
+    'no_gateway' => TRUE,
+  );
+
+  return $methods;
+}
+
+
+/**
+ *****************************************
+ * Callback Functions, Forms, and Tables *
+ *****************************************
+ */
+
+/**
+ * Callback for payment method settings.
+ */
+function uc_payment_method_proxypay3_eurobank($op, &$order) {
+  switch ($op) {
+    case 'cart-details':
+      return;
+
+    case 'cart-process':
+      return;
+
+    case 'settings':
+      $form['pp_proxypay'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('ProxyPay3 Parameters'),
+        '#description' => t('ProxyPay3 parameters.'),
+        '#collapsible' => TRUE,
+        '#collapsed'  => TRUE,
+      );
+      $form['pp_proxypay']['pp_bank'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Bank Connectivity'),
+        '#description' => t('Information about the connection with the bank.'),
+        '#collapsible' => TRUE,
+        '#collapsed'  => FALSE,
+      );
+      $form['pp_proxypay']['pp_bank']['uc_proxypay3_eurobank_merchantID'] = array(
+        '#type' => 'textfield',
+        '#title' => t('merchant ID'),
+        '#description' => t('Your merchant ID, provided by the bank.'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_merchantID', ''),
+        '#size' => 16,
+      );
+      $form['pp_proxypay']['pp_bank']['uc_proxypay3_eurobank_merchant_name'] = array(
+        '#type' => 'textfield',
+        '#title' => t('merchant Name'),
+        '#description' => t('Your merchant name, provided by the bank.'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_merchant_name', ''),
+        '#size' => 16,
+      );
+      $form['pp_proxypay']['pp_bank']['uc_proxypay3_eurobank_merchant_password'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Confirmation password'),
+        '#description' => t('Your confirmtion password, provided by the bank.'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_merchant_password', ''),
+        '#size' => 16,
+      );
+      $form['pp_proxypay']['pp_bank']['uc_proxypay3_eurobank_post_url'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Post url'),
+        '#description' => t('The URL the we post the data, provided by the bank.'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_post_url', ''),
+        '#size' => 64,
+      );
+      $form['pp_proxypay']['pp_parameters'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Parameters'),
+        '#description' => t('Parameters related to the Eurobank ProxyPay3 payment gateway.'),
+        '#collapsible' => TRUE,
+        '#collapsed'  => TRUE,
+      );
+      $form['pp_proxypay']['pp_parameters']['uc_proxypay3_eurobank_APACScommand'] = array(
+        '#type' => 'textfield',
+        '#title' => t('APACScommand'),
+        '#description' => t('ProxyPay3 command sent to the payment gateway. Do not alter, if you are not sure what you are doing. Default value: NewPayment'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_APACScommand', 'NewPayment'),
+        '#size' => 32,
+      );
+      $form['pp_proxypay']['pp_parameters']['uc_proxypay3_eurobank_currency'] = array(
+        '#type' => 'select',
+        '#title' => t('Currency'),
+        '#description' => t('The currency used by the payment gateway.'),
+        '#options' => array(
+          '0978' => t('Euro'),
+          '0840' => t('US Dollar'),
+        ),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_currency', '0978'),
+      );
+      $form['pp_proxypay']['pp_parameters']['uc_proxypay3_eurobank_language'] = array(
+        '#type' => 'select',
+        '#title' => t('Language preference'),
+        '#description' => t('Adjust language on Eurobank gateway payment pages.'),
+        '#options' => array(
+          'EN' => t('English'),
+          'GR' => t('Greek'),
+        ),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_language', 'GR'),
+      );
+      $form['pp_proxypay']['pp_links'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Links'),
+        '#description' => t('Links requested by the Bank. Do *not* change these after contacting the bank or if you don\'t know what you are doing.'),
+        '#collapsible' => TRUE,
+        '#collapsed'  => TRUE,
+      );
+      $form['pp_proxypay']['pp_links']['uc_proxypay3_eurobank_links_cart_checkout_review'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Check out Link'),
+        '#description' => t('Eurobank will check the referer to be this one so as to be sure that the user is redirected by the rigth place. Default value: cart/checkout/review'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_links_cart_checkout_review', 'cart/checkout/review'),
+        '#size' => 32,
+      );
+      $form['pp_proxypay']['pp_links']['uc_proxypay3_eurobank_links_complete'] = array(
+        '#type' => 'textfield',
+        '#title' => t('OK Link'),
+        '#description' => t('Eurobank will redirect to this link after a succesful payment. Default value: cart/eurobank/complete'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_links_complete', 'cart/eurobank/complete'),
+        '#size' => 32,
+      );
+      $form['pp_proxypay']['pp_links']['uc_proxypay3_eurobank_links_error'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Not OK Link'),
+        '#description' => t('Eurobank will redirect to this link after an unsuccesful payment. Default value: cart/eurobank/error'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_links_error', 'cart/eurobank/error'),
+        '#size' => 32,
+      );
+      $form['pp_proxypay']['pp_links']['uc_proxypay3_eurobank_links_confirm'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Merchant confirmation Link'),
+        '#description' => t('Eurobank will ping you to this URL, to check if you are a valid merchant. Default value: cart/eurobank/confirm'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_links_confirm', 'cart/eurobank/confirm'),
+        '#size' => 32,
+      );
+      $form['pp_proxypay']['pp_links']['uc_proxypay3_eurobank_links_validate'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Merchant validation Link'),
+        '#description' => t('Eurobank will ping you to this URL, to validate the order. Default value: cart/eurobank/validate'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_links_validate', 'cart/eurobank/validate'),
+        '#size' => 32,
+      );
+      $form['pp_messages'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Messages'),
+        '#description' => t('Messages provided to you costumers.'),
+        '#collapsible' => TRUE,
+        '#collapsed'  => TRUE,
+      );
+      $form['pp_messages']['uc_proxypay3_eurobank_method_title'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Payment method title'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_method_title', t('Credit card on Eurobank secure server')),
+        '#size' => 64,
+      );
+      $form['pp_messages']['uc_proxypay3_eurobank_checkout_button'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Order review submit button text'),
+        '#description' => t('Provide proxypay3 - eurobank specific text for the submit button on the order review page. (proteinw i emfanisi na ginetai mesw t() kai oxi to apothikebmeno wste na ipostirizetai kai poliglwsia)'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_checkout_button', t('Submit Order')),
+        '#size' => 64,
+      );
+      $form['pp_messages']['uc_proxypay3_eurobank_card_not_authorised'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Card not authorised message'),
+        '#description' => t('User message when credit card not authorised.'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_card_not_authorised', t('Your credt card payment was not authorized. Please feel free to continue shopping or contact us for assistance.')),
+      );
+      $form['pp_messages']['uc_proxypay3_eurobank_card_error'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Card error message'),
+        '#description' => t('User message when error occured.'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_card_error', t('An error has occurred during payment. Please contact us to ensure your order has been submitted.')),
+      );
+      $form['pp_messages']['uc_proxypay3_eurobank_card_pending'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Payment pending message'),
+        '#description' => t('User message when payment is pending.'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_card_pending', t('We did not yet recieve a payment confirmation by the bank. Don\'t worry, your transaction can still be confirmed in a short while. When we do get a confirmation, you will automatically receive an email that confirms your payment.')),
+      );
+      $form['pp_redirects'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Redirections'),
+        '#description' => t('Redirections after card proccesing.'),
+        '#collapsible' => TRUE,
+        '#collapsed'  => TRUE,
+      );
+      $form['pp_redirects']['uc_proxypay3_eurobank_redirect_success'] = array(
+        '#type' => 'textfield',
+        '#title' => t('After success'),
+        '#description' => t('Redirect user after successfull card proccessing.'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_redirect_success', 'cart/checkout/complete'),
+        '#size' => 64,
+      );
+      $form['pp_redirects']['uc_proxypay3_eurobank_redirect_error'] = array(
+        '#type' => 'textfield',
+        '#title' => t('After error'),
+        '#description' => t('Redirect user after payment error.'),
+        '#default_value' => variable_get('uc_proxypay3_eurobank_redirect_error', 'cart'),
+        '#size' => 64,
+      );
+      return $form;
+  }
+}
+
+// Form to build the submission
+function uc_proxypay3_eurobank_form($form, &$form_state, $order) {
+  global $language;
+  //$language = language_initialize();
+  //print_r($language);
+  if ($language->language == 'el')   // ALLAGi!!!!!!
+    $my_lang = 'GR';
+  elseif ($language->language == 'en')
+    $my_lang = 'EN';
+  else
+    $my_lang = variable_get('uc_proxypay3_eurobank_language', 'GR');
+
+  $country = uc_get_country_data(array('country_id' => $order->billing_country));
+  if ($country === FALSE) {
+    $country = array(0 => array('country_iso_code_3' => 'USA'));
+  }
+
+  $data = array(
+    'merchantID' => variable_get('uc_proxypay3_eurobank_merchantID', ''),
+    'APACScommand' => variable_get('uc_proxypay3_eurobank_APACScommand', 'NewPayment'),
+    'amount' => uc_currency_format($order->order_total, FALSE, FALSE, ''),
+    'merchantRef' => $order->order_id,
+    'merchantDesc' => t('Your order with code:') . $order->order_id,
+    'currency' => variable_get('uc_proxypay3_eurobank_currency', '0978'),
+    'lang' => $my_lang,
+    'var1' => '',
+    'var2' => '',
+    'var3' => '',
+    'var4' => '',
+    'var5' => '',
+    'var6' => '',
+    'var7' => '',
+    'var8' => '',
+    'var9' => '',
+    'CustomerEmail' => substr($order->primary_email, 0, 64),
+    'Offset' => '',
+    'Period' => '',
+  );
+
+  $form['#action'] = variable_get('uc_proxypay3_eurobank_post_url', '');
+  
+  foreach ($data as $name => $value) {
+    $form[$name] = array('#type' => 'hidden', '#value' => $value);
+  }
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    //'#value' => variable_get('uc_proxypay3_eurobank_checkout_button', t('Submit Order')),		// ALLAGi!!!!!!
+    '#value' => t('Submit Order'),
+    '#attributes' => array('onclick' => '$(this).click(function() { return false; });'),
+  );
+  
+  $result = db_query("SELECT status FROM {uc_proxypay3_eurobank} WHERE order_id = %d ", $order->order_id);
+  if ($row = db_fetch_object($result)) {
+      db_query("UPDATE {uc_proxypay3_eurobank} set status = 'NOTOK'   WHERE order_id = %d ", $order->order_id);
+      //error!!
+  }
+  else {
+    db_query("INSERT INTO {uc_proxypay3_eurobank} (order_id, amount, curency, status) VALUES (%d, '%s', '%s', 'OK')", $order->order_id, $data['amount']/100, $data['currency']);
+  }
+  return $form;
+}
